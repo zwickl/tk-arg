@@ -3,14 +3,16 @@ from os import devnull
 from Tkinter import *
 import tkFileDialog
 import tkFont
-from ttk import *
+#importing ttk here overrides some widget definitions from Tkinter, which is fine
+#except bizarre things like specifying background= in constructors doesn't work
+#from ttk import *
 import argparse
 from textwrap import fill
 import re
 import shlex
 import subprocess
-from plotutils import ArgparseActionAppendToDefault
-from pygot.utils import proportion_type, argparse_bounded_float
+#from plotutils import ArgparseActionAppendToDefault
+from pygot.utils import proportion_type, argparse_bounded_float, ArgparseActionAppendToDefault
 
 '''
 ***For reference, here is the help on the attributes of the argparse.Action baseclass***
@@ -344,6 +346,7 @@ class ArgparseGui(object):
         self.canvas.pack(side="left", fill="both", expand=True)
         
         self.frame = Frame(self.canvas)
+        self.frame.config(background="#ffffff")
         #the window is a slot in the canvas (the size of the canvas) to hold a single other widget, which will be the frame
         self.canvas.create_window((4, 4), window=self.frame, anchor="nw", tags="self.frame")
         
@@ -383,7 +386,8 @@ class ArgparseGui(object):
                             else:
                                 display_title = "Misc. options".upper()
                             #Place a centered label for the group name
-                            Label(self.frame, text=fill(display_title, label_width), font=tkFont.Font(size=14, weight='bold')).grid(row=row, column=column_offset, columnspan=2)
+                            #Label(self.frame, text=fill(display_title, label_width*0.8), font=tkFont.Font(size=14, weight='bold')).grid(row=row, column=column_offset, columnspan=2)
+                            Label(self.frame, text=fill(display_title, label_width*0.8), font=tkFont.Font(size=14, weight='bold')).grid(row=row, column=column_offset, columnspan=1)
                             group_title_displayed = True
                             row += 1
                        
@@ -442,17 +446,25 @@ class ArgparseGui(object):
 
         #a window to spit out text
         if output_frame:
-            self.results = Text(self.frame, width=label_width)
-            self.results.grid(row=0, column = column_offset + 2, rowspan=widgets_per_column, padx=widget_padx, sticky='W')
+            self.results = Text(self.frame, width=label_width, borderwidth=2)
+            self.results.grid(row=0, column = column_offset + 2, rowspan=widgets_per_column, sticky='WNS')
+            
+            #self.results_canvas = Canvas(self.frame)
+            #self.results_canvas.grid(row=0, column = column_offset + 2, rowspan=widgets_per_column, padx=widget_padx, sticky='NS')
+            #self.results = Text(self.results_canvas, width=label_width, height=36, background='white', relief='sunken', borderwidth=2)
+            #self.results.grid(row=0, column=0, rowspan=widgets_per_column, sticky='NS')
+
+
         else:
             self.results = None
 
         #a window to spit out graphics
         if graphics_window:
-            #self.sort_button = Button(self.frame, text='SORT')
-            #self.sort_button.grid(row=widgets_per_column+2, column=0, padx=widget_padx)
-            self.graphics_canvas = Canvas(self.frame, width=width, height=50)
-            self.graphics_canvas.grid(row=widgets_per_column+2, column=0, padx=widget_padx, pady=widget_pady, columnspan=4, rowspan=2, sticky='W')
+            self.sort_button = Button(self.button_frame, text='SORT')
+            self.sort_button.grid(row=0, column=2)
+            #self.graphics_canvas = Canvas(self.frame, width=width, height=100)
+            self.graphics_canvas = Canvas(self.frame, height=100, borderwidth=2, relief='sunken')
+            self.graphics_canvas.grid(row=widgets_per_column+2, column=0, padx=widget_padx, pady=widget_pady, columnspan=column_offset+3, rowspan=2, sticky='WE')
 
         self.cancelled = False
 
