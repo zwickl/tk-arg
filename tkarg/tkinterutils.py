@@ -369,7 +369,7 @@ class ArgparseGui(object):
         
         #Loop over the argparse argument groups
         for group in group_list:
-            if len(group._group_actions):
+            if len(group._group_actions) and not hasattr(group, 'GUI_IGNORE'):
                 group_title_displayed = False
                 #Loop over the individual arguments in this group
                 for option in group._group_actions:
