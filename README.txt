@@ -1,2 +1,2 @@
 # tk-arg
-Automatically make a tkinter GUI from the argparse configuration in a Python script
+#Automatically generate a tkinter gui from an argparse script

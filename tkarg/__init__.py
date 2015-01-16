@@ -4,16 +4,13 @@
 ##  tk-arg - #Automatically generate a tkinter gui from an argparse script
 ##############################################################################
 
-"""
-Imports all modules into tk-arg namespace
-"""
-
 import sys
 import os
 
 ###############################################################################
 ## Populate the 'tkarg' namespace
-from tkarg import tkinterutils
+#from tkarg import tkinterutils
+from tkarg.tkinterutils import ArgparseGui
 
 ###############################################################################
 ## PACKAGE METADATA

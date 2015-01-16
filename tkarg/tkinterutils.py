@@ -186,7 +186,7 @@ class ArgparseStringOption(ArgparseOption):
             if isinstance(self.nargs, int):
                 self.label_string += ' (%d values expected)' % self.nargs
             elif self.nargs in [ '*', '+' ]:
-                self.label_string += ' (multiple values allowed)' % self.nargs
+                self.label_string += ' (multiple values allowed)'
 
             self.label = Label(frame, text=fill(self.label_string, label_width))
         
@@ -230,9 +230,8 @@ class ArgparseOptionMenuOption(ArgparseOption):
 
         #OptionMenu signature is this:
         #__init__(self, master, variable, value, *values, **kwargs)
-        #where variable is "the resource textvariable", and value is the 
-        #default value
-        self.widget = OptionMenu(frame, self.var, option.choices[0], *option.choices)
+        #where variable is "the resource textvariable", and value is the default value
+        self.widget = OptionMenu(frame, self.var, option.choices[0], *option.choices[1:])
 
         self.extract_label_from_help()
         req_string = 'REQ: ' if option.required else ''
@@ -278,7 +277,12 @@ class ArgparseFileOption(ArgparseOption):
                 else:
                     self.widget = Button(frame, text='OPEN', command=self.open_file_dialog)
 
-        self.update_box = Label(frame, text=fill('  Files chosen: ', self.label_width), anchor='w', foreground='red')
+        if self.nargs and (self.nargs in [ '*', '+' ] or self.nargs > 1):
+            fstr = 'Files'
+        else:
+            fstr = 'File'
+
+        self.update_box = Label(frame, text=fill('  %s chosen: ' % fstr, self.label_width), anchor='w', foreground='red')
 
         self.var = None
 
@@ -325,35 +329,12 @@ class ArgparseGui(object):
             graphics_window=False):
 
         self.tk = tk or Tk()
+        self.tk.title(parser.description or parser.prog)
 
-        ###############
-        #adapted from http://stackoverflow.com/questions/3085696/adding-a-scrollbar-to-a-grid-of-widgets-in-tkinter
-        
-        #This canvas object will be the entire toplevel window.  The scrollbars will be attached to it, a window
-        #will be made (which is what allows other widgets to be embedded in a canvas), a frame will be embedded 
-        #in the window to actually hold all other widgets.
-        self.canvas = Canvas(self.tk, height=height, width=width, borderwidth=0, background="#ffffff")
-        
-        self.vsb = Scrollbar(self.tk, orient="vertical", command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=self.vsb.set)
-        self.vsb.pack(side="right", fill="y")
+        #this call is currently required, so has side effects besides making the scrollbars
+        self.AddScrollbars(height, width)
 
-        self.hsb = Scrollbar(self.tk, orient="horizontal", command=self.canvas.xview)
-        self.canvas.configure(xscrollcommand=self.hsb.set)
-        self.hsb.pack(side="bottom", fill="x")
-        
-        #after this call the toplevel window with scrollbars and of the correct size will exist
-        self.canvas.pack(side="left", fill="both", expand=True)
-        
-        self.frame = Frame(self.canvas)
-        self.frame.config(background="#ffffff")
-        #the window is a slot in the canvas (the size of the canvas) to hold a single other widget, which will be the frame
-        self.canvas.create_window((4, 4), window=self.frame, anchor="nw", tags="self.frame")
-        
-        #this will allow the scrollbars to adjust if the window is manually resized
-        self.frame.bind("<Configure>", self.OnFrameConfigure)
-        ################
-
+        #start collecting the options
         self.option_list = []
         #bizarrely, options appear once for each potential flag (i.e. short and long), so need to keep track
         seen_options = []
@@ -390,30 +371,31 @@ class ArgparseGui(object):
                             Label(self.frame, text=fill(display_title, label_width*0.8), font=tkFont.Font(size=14, weight='bold')).grid(row=row, column=column_offset, columnspan=1)
                             group_title_displayed = True
                             row += 1
-                       
+                      
                         #a flag, which appears as a checkbox
-                        if isinstance(option, (argparse._StoreTrueAction, argparse._StoreFalseAction)):
+                        if isinstance(option, (argparse._StoreTrueAction, argparse._StoreFalseAction, argparse._StoreConstAction)):
                             gui_option = ArgparseBoolOption(option, self.frame, label_width=label_width)
-                        
+                       
                         #some variable(s) to store
                         elif isinstance(option, (argparse._StoreAction, argparse._AppendAction)):
+                            #print option.dest, option.type, type(option.type), type(option)
                             #with fixed choices, appears as a select box
                             if option.choices:
                                 gui_option = ArgparseOptionMenuOption(option, self.frame, label_width=label_width)
                             
                             #hack to add a file chooser widget if 'file' appears in the option name, which would be considered a string otherwise
-                            elif (isinstance(option.type, type(str)) or option.type is None) and 'file' in option.dest.lower():
+                            elif option.type in [str, None] and 'file' in option.dest.lower():
                                 gui_option = ArgparseFileOption(option, self.frame, label_width=label_width)
                             
                             #if no type is specified to ArgumentParser.add_argument then the default is str
                             #this will appear as a text entry box
-                            elif option.type is None or isinstance(option.type, (type(str), type(proportion_type), type(argparse_bounded_float))):
+                            elif option.type in [None, str, type(proportion_type), type(argparse_bounded_float)]:
                                 gui_option = ArgparseStringOption(option, self.frame, label_width=label_width)
                            
                             #if the actual argparse.FileType is specified in the type, in which case it is usually automatically opened during parse_args
-                            elif isinstance(option.type, argparse.FileType):
+                            elif option.type in [argparse.FileType,  file]:
                                 gui_option = ArgparseFileOption(option, self.frame, label_width=label_width)
-                            
+                           
                             else:
                                 sys.exit("unknown Store action: %s\n" % type(option))
                         
@@ -421,7 +403,7 @@ class ArgparseGui(object):
                         elif isinstance(option, ArgparseActionAppendToDefault):
                             gui_option = ArgparseStringOption(option, self.frame, label_width=label_width)
                         #ignore help
-                        elif isinstance(option, argparse._HelpAction):
+                        elif isinstance(option, (argparse._HelpAction, argparse._VersionAction)):
                             continue
                         else:
                             sys.exit("unknown action: %s\n" % option)
@@ -454,7 +436,6 @@ class ArgparseGui(object):
             #self.results = Text(self.results_canvas, width=label_width, height=36, background='white', relief='sunken', borderwidth=2)
             #self.results.grid(row=0, column=0, rowspan=widgets_per_column, sticky='NS')
 
-
         else:
             self.results = None
 
@@ -469,6 +450,33 @@ class ArgparseGui(object):
         self.cancelled = False
 
         self.bring_to_front()
+    
+    def AddScrollbars(self, height, width):
+        #adapted from http://stackoverflow.com/questions/3085696/adding-a-scrollbar-to-a-grid-of-widgets-in-tkinter
+        
+        #This canvas object will be the entire toplevel window.  The scrollbars will be attached to it, a window
+        #will be made (which is what allows other widgets to be embedded in a canvas), a frame will be embedded 
+        #in the window to actually hold all other widgets.
+        self.canvas = Canvas(self.tk, height=height, width=width, borderwidth=0, background="#ffffff")
+        
+        self.vsb = Scrollbar(self.tk, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.vsb.set)
+        self.vsb.pack(side="right", fill="y")
+
+        self.hsb = Scrollbar(self.tk, orient="horizontal", command=self.canvas.xview)
+        self.canvas.configure(xscrollcommand=self.hsb.set)
+        self.hsb.pack(side="bottom", fill="x")
+        
+        #after this call the toplevel window with scrollbars and of the correct size will exist
+        self.canvas.pack(side="left", fill="both", expand=True)
+        
+        self.frame = Frame(self.canvas)
+        self.frame.config(background="#ffffff")
+        #the window is a slot in the canvas (the size of the canvas) to hold a single other widget, which will be the frame
+        self.canvas.create_window((4, 4), window=self.frame, anchor="nw", tags="self.frame")
+        
+        #this will allow the scrollbars to adjust if the window is manually resized
+        self.frame.bind("<Configure>", self.OnFrameConfigure)
 
     def output_result(self, text):
         if self.results:
