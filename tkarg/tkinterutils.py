@@ -389,7 +389,7 @@ class ArgparseGui(object):
                             
                             #if no type is specified to ArgumentParser.add_argument then the default is str
                             #this will appear as a text entry box
-                            elif option.type in [None, str, type(proportion_type), type(argparse_bounded_float)]:
+                            elif option.type in [None, str, float, int, type(proportion_type), type(argparse_bounded_float)]:
                                 gui_option = ArgparseStringOption(option, self.frame, label_width=label_width)
                            
                             #if the actual argparse.FileType is specified in the type, in which case it is usually automatically opened during parse_args
@@ -397,7 +397,7 @@ class ArgparseGui(object):
                                 gui_option = ArgparseFileOption(option, self.frame, label_width=label_width)
                            
                             else:
-                                sys.exit("unknown Store action: %s\n" % type(option))
+                                sys.exit("unknown Store action: %s (%s)\n" % (type(option), option.dest))
                         
                         #my derived action, same as append, but doesn't overwrite specified defaults (good for kwargs)
                         elif isinstance(option, ArgparseActionAppendToDefault):
