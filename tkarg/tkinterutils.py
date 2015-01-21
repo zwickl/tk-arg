@@ -97,6 +97,9 @@ class ArgparseOption(object):
         
         self.nargs = option.nargs
 
+        self.dependent_options = []
+        self.depends_on = 0
+
     def extract_label_from_help(self):
         help_string = re.sub('[(]default [)]', '', self.option.help).strip()
         if help_string:
@@ -113,6 +116,42 @@ class ArgparseOption(object):
             next_row += 1
         return next_row 
 
+    def grey_out(self):
+        '''Disable both the label and widget assigned to a particular option, which 
+        by default means to grey it out
+        '''
+        if not hasattr(self, 'widget'):
+            sys.exit('ERROR: grey_out called before ArgparseOption configured\n')
+        self.widget.config(state=DISABLED)
+        self.label.config(state=DISABLED)
+
+    def activate(self):
+        '''Return the label and widget for an option back to the normal state from 
+        the disabled state. If this option is dependent on multiple others, there 
+        is a sort of reference counting that is does to ensure the proper number 
+        of dependencies are met.
+        '''
+        self.depends_on -= 1
+        if not self.depends_on:
+            self.widget.config(state=NORMAL)
+            self.label.config(state=NORMAL)
+
+    def register_dependency(self, dep):
+        '''Add dep to a list of other options that depend on this option, and grey
+        it out.  Also increment the dependency reference count of the dependent 
+        option.
+        '''
+        self.dependent_options.append(dep)
+        dep.grey_out()
+        dep.depends_on += 1
+
+    def activate_dependencies(self):
+        '''Tell all depenent options that this dependency has been met, decrementing 
+        its dependency counter, and possibly fully activating it.
+        '''
+        for dep in self.dependent_options:
+            dep.activate()
+        
 
 class ArgparseBoolOption(ArgparseOption):
     '''A boolean True/False argument.  Will be represented in the gui with a Checkbutton.
@@ -289,14 +328,17 @@ class ArgparseFileOption(ArgparseOption):
     def open_file_dialog(self):
         self.var = tkFileDialog.askopenfilename()
         self.update_box.config(text=fill('  File chosen: %s ' % self.var, self.label_width+50), foreground='red')
+        self.activate_dependencies()
 
     def open_multiple_files_dialog(self):
         self.var = tkFileDialog.askopenfilenames()
         self.update_box.config(text=fill('  Files chosen: %s ' % ' '.join(self.var), self.label_width+50), foreground='red')
+        self.activate_dependencies()
 
     def output_file_dialog(self):
         self.var = tkFileDialog.asksaveasfilename()
         self.update_box.config(text=fill('  File chosen: %s ' % self.var, self.label_width+50), foreground='red')
+        self.activate_dependencies()
 
     def make_string(self):
         if self.var:
@@ -331,23 +373,31 @@ class ArgparseGui(object):
         self.tk = tk or Tk()
         self.tk.title(parser.description or parser.prog)
 
+        auto_size = False
+        if auto_size:
+            width = self.tk.winfo_screenwidth() * 0.9
+            height = self.tk.winfo_screenheight() * 0.85
+
         #this call is currently required, so has side effects besides making the scrollbars
         self.AddScrollbars(height, width)
 
         #start collecting the options
-        self.option_list = []
+        self.option_list = {}
         #bizarrely, options appear once for each potential flag (i.e. short and long), so need to keep track
         seen_options = []
 
         column_offset = 0
         row = 0
         
-        #I don't know why I did this, but probably had a reason.  Rather strange.
+        #first group is positional, second is optional, then any user defined groups
+        #optional group includes any flags not explictly placed in a group
+        #this reorders them such that the optional group will appear last below
         group_list = [parser._action_groups[0]]
         if len(parser._action_groups) > 2:
             group_list.extend(parser._action_groups[2:])
         group_list.append(parser._action_groups[1])
-        
+       
+        positional_num = 1
         #Loop over the argparse argument groups
         for group in group_list:
             if len(group._group_actions) and not hasattr(group, 'GUI_IGNORE'):
@@ -365,6 +415,7 @@ class ArgparseGui(object):
                             if group.title != "optional arguments":
                                 display_title = group.title.upper()
                             else:
+                                #This is for the optional group, the default group for arguments
                                 display_title = "Misc. options".upper()
                             #Place a centered label for the group name
                             #Label(self.frame, text=fill(display_title, label_width*0.8), font=tkFont.Font(size=14, weight='bold')).grid(row=row, column=column_offset, columnspan=2)
@@ -414,7 +465,12 @@ class ArgparseGui(object):
                             row = 0
                             column_offset += 2
 
-                        self.option_list.append(gui_option)
+                        #self.option_list.append(gui_option)
+                        if gui_option.option.option_strings:
+                            self.option_list[gui_option.option.option_strings[-1]] = gui_option
+                        else:
+                            self.option_list['positional%d' % positional_num] = gui_option
+                            positional_num += 1
 
         #buttons appear below the other widgets
         self.button_frame = Frame(self.frame)
@@ -452,11 +508,13 @@ class ArgparseGui(object):
         self.bring_to_front()
     
     def AddScrollbars(self, height, width):
-        #adapted from http://stackoverflow.com/questions/3085696/adding-a-scrollbar-to-a-grid-of-widgets-in-tkinter
+        '''adapted from http://stackoverflow.com/questions/3085696/adding-a-scrollbar-to-a-grid-of-widgets-in-tkinter
         
-        #This canvas object will be the entire toplevel window.  The scrollbars will be attached to it, a window
-        #will be made (which is what allows other widgets to be embedded in a canvas), a frame will be embedded 
-        #in the window to actually hold all other widgets.
+        This canvas object will be the entire toplevel window.  The scrollbars will be attached to it, a window
+        will be made (which is what allows other widgets to be embedded in a canvas), a frame will be embedded 
+        in the window to actually hold all other widgets.
+        This call is currently required, i.e. it has side effects besides adding the scrollbars.
+        '''
         self.canvas = Canvas(self.tk, height=height, width=width, borderwidth=0, background="#ffffff")
         
         self.vsb = Scrollbar(self.tk, orient="vertical", command=self.canvas.yview)
@@ -483,8 +541,12 @@ class ArgparseGui(object):
             self.results.insert(END, text)
 
     def make_commandline_list(self):
+        '''The most important part of the entire process.  Convert each of the options entered through 
+        the GUI into its command line equivalent strings, and pass to the underlying ArgumentParser, 
+        which need not know that the input came from the GUI at all.
+        '''
         return_list = []
-        for option in self.option_list:
+        for option in self.option_list.values():
             return_list.extend(option.make_string())
         return return_list
 
@@ -505,7 +567,7 @@ class ArgparseGui(object):
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def bring_to_front(self):
-        #Need to do this on OS X to bring window to front, otherwise root.lift() should work
+        '''Need to do this on OS X to bring window to front, otherwise root.lift() should work.'''
         if 'darwin' in sys.platform.lower():
             try:
                 #this can give odd non-critical error messages from the OS, so send stderr to devnull
@@ -515,5 +577,18 @@ class ArgparseGui(object):
                 pass
         else:
             self.tk.lift()
+
+    def register_dependencies(self, depend_dict):
+        '''Use the passed dictionary to indicate dependencies of one option upon others.
+        Dict keys are the options that are dependencies for each of the options listed in the 
+        values.  Keys and values are passed as the argument flags, ie. 
+        {'--some-dep':['--dependent1', '--dependent2']}
+        '''
+        for key, val in depend_dict.items():
+            if not isinstance(val, str):
+                for v in val:
+                    self.option_list[key].register_dependency(self.option_list[v])
+            else:
+                self.option_list[key].register_dependency(self.option_list[val])
 
 
