@@ -388,6 +388,7 @@ class ArgparseGui(object):
 
         column_offset = 0
         row = 0
+        max_row, max_col = 0, 0
         
         #first group is positional, second is optional, then any user defined groups
         #optional group includes any flags not explictly placed in a group
@@ -458,7 +459,9 @@ class ArgparseGui(object):
                             continue
                         else:
                             sys.exit("unknown action: %s\n" % option)
-                        
+                       
+                        max_row = max(row, max_row)
+                        max_col = max(column_offset, max_col)
                         row = gui_option.position(row, column_offset)
                         
                         if row >= widgets_per_column:
@@ -475,12 +478,23 @@ class ArgparseGui(object):
         #buttons appear below the other widgets
         self.button_frame = Frame(self.frame)
         self.button_frame.grid(row=widgets_per_column+1, column=0)
-        
+        self.buttons = {}
         if destroy_when_done:
-            Button(self.button_frame, text='DONE', command=self.done).grid(row=0, column=0)
+            but = Button(self.button_frame, text='DONE', command=self.done)
+            but.grid(row=0, column=0)
+            self.buttons['DONE'] = but
         else:
-            Button(self.button_frame, text='RUN', command=self.submit).grid(row=0, column=0)
-        Button(self.button_frame, text='CANCEL/QUIT', command=self.cancel).grid(row=0, column=1)
+            but = Button(self.button_frame, text='RUN', command=self.submit)
+            #this button will be clicked if the enter key is pressed
+            #having trouble getting it to look like focus is on it though
+            but.bind('<Return>', self.submit)
+            but.focus_set()
+            but.config(state='active', highlightcolor='red', activebackground='red', highlightthickness=5)
+            but.grid(row=0, column=0)
+            self.buttons['RUN'] = but
+        but = Button(self.button_frame, text='CANCEL/QUIT', command=self.cancel)
+        but.grid(row=0, column=1)
+        self.buttons['CANCEL'] = but
 
         #a window to spit out text
         if output_frame:
@@ -506,6 +520,32 @@ class ArgparseGui(object):
         self.cancelled = False
 
         self.bring_to_front()
+
+        #print self.frame.grid_info()
+        #print self.canvas.grid_info()
+        #print self.frame.propagate(True)
+        #print self.canvas.propagate(True)
+        #print self.tk.bbox()
+        #self.tk.wm_geometry('1000x1000+0+0')
+        #print self.tk.wm_geometry()
+        #print self.tk.maxsize()
+        #print dir(self.tk)
+        #self.frame.pack(fill=BOTH, expand=YES)
+        #self.frame.pack(fill=BOTH, expand=NO)
+        #self.canvas.pack()
+        #self.frame.pack()
+        #self.canvas.pack()
+        #print self.canvas.pack_info()
+        #print self.frame.pack_info()
+        
+        
+        #print self.tk.grid_bbox()
+        #print self.canvas.grid_bbox()
+        #print self.frame.grid_bbox()
+        
+        #print self.tk.grid_propagate()
+        #print self.canvas.grid_propagate()
+        #print self.frame.grid_propagate()
     
     def AddScrollbars(self, height, width):
         '''adapted from http://stackoverflow.com/questions/3085696/adding-a-scrollbar-to-a-grid-of-widgets-in-tkinter
@@ -550,7 +590,7 @@ class ArgparseGui(object):
             return_list.extend(option.make_string())
         return return_list
 
-    def submit(self):
+    def submit(self, event=None):
         self.frame.quit()
 
     def done(self):
@@ -591,4 +631,117 @@ class ArgparseGui(object):
             else:
                 self.option_list[key].register_dependency(self.option_list[val])
 
+    def add_buttons(self, button_dict):
+        '''Use the passed dictionary to create simple buttons, with keys being the name
+        to appear on the button, and the value being the callback function
+        '''
+        self.buttons = []
+        for name, func in button_dict.items():
+            button = Button(self.button_frame, text=name, command=func)
+            button.grid(row=0, column=2)
+            self.buttons.append(button)
 
+    #def create_results_window(self, height, width):
+
+
+
+class ResultsWindow(object):
+    '''Class to more easily create a new toplevel window that contains various kinds of results,
+    either graphics drawn onto a canvas or a text box.  Things like the size of each pane and
+    the border between them are set up on the class instance, and then individual panes are 
+    requested by chosing a column, row, row_span and column_span, much like the grid geometry
+    manager.
+    '''
+    def __init__(self, tk_root, width, height, border_width=5, pane_width=512, pane_height=384):
+        self.border_width = border_width
+        self.pane_width = pane_width
+        self.pane_height = pane_height
+        self.max_row = 0
+        self.max_column = 0
+
+        self.internal_pane_width = pane_width - border_width * 2
+        self.internal_pane_height = pane_height - border_width * 2
+
+        self.tk = Toplevel(tk_root)
+        self.tk.title('Results')
+        self.main_canvas = Canvas(self.tk, borderwidth=0)
+        self.main_canvas.pack()
+
+        self.panes = {}
+
+    def _place_pane(self, pane, row, column, row_span=1, column_span=1):
+        '''Place a pane (canvas or text) that has already been created
+        by add_canvas_pane or add_text_pane. Determine the new required
+        size of the main canvas, and resize as necessary
+        '''
+
+        pane_x0 = column * self.pane_width + self.border_width
+        pane_y0 = row * self.pane_height + self.border_width
+        
+        self.main_canvas.create_window((pane_x0, pane_y0), 
+                window=pane, 
+                height=pane.winfo_reqheight() + self.border_width, 
+                width=pane.winfo_reqwidth() + self.border_width, 
+                anchor='nw'
+                )
+      
+        self.max_row = max(row + row_span, self.max_row)
+        self.max_column = max(column + column_span, self.max_column)
+
+        self.main_canvas.config(width=self.pane_width * self.max_column, height=self.pane_height * self.max_row)
+
+    def add_canvas_pane(self, row=0, column=0, row_span=1, column_span=1, name=None):
+        '''
+        Outer dimensions are the pane size, which is internally taken care of by this class
+        The inner is the actual tk widget to be used and the canvas window that it lives in.  
+        The difference between them is the border_width
+        /-----------\
+        | /-------\ |
+        | |       | |
+        | |       | |
+        | \-------/ |
+        \-----------/
+        '''
+        pane = Canvas(self.tk, 
+                width=self.internal_pane_width * column_span, 
+                height=self.internal_pane_height * row_span,
+                borderwidth=0
+                )
+        
+        self._place_pane(pane, row, column, row_span, column_span)
+
+        if name:
+            self.panes[name] = pane
+        else:
+            self.panes['pane%d' % len(self.panes)] = pane
+        return pane
+    
+    def add_text_pane(self, row, column, row_span=1, column_span=1, name=None):
+        '''
+        Outer dimensions are the pane size, which is internally taken care of by this class
+        The inner is the actual tk widget to be used and the window that it lives in.  
+        The difference between them is the border_width
+        /-----------\
+        | /-------\ |
+        | |       | |
+        | |       | |
+        | \-------/ |
+        \-----------/
+        '''
+        #irritatingly, the line size of the text wrapping has nothing to do with the actual Text
+        #widget size.  Need to specify it by characters or text will vanish off the right side
+        #of the window.  With the default font about 70 chars can fit in 512 pixels width, so
+        #each char is about 7.3 pixels wide, so to be conservative (i.e. be sure not to be 
+        #too wide) figure 7.5 pixels per character
+        char_width = int(self.pane_width * column_span / 7.5)
+        pane = Text(self.tk, width=char_width)
+
+        self._place_pane(pane, row, column, row_span, column_span)
+        
+        if name:
+            self.panes[name] = pane
+        else:
+            self.panes['pane%d' % len(self.panes)] = pane
+
+        return pane
+ 
