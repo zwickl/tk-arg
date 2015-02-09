@@ -69,11 +69,12 @@ class Action(_AttributeHolder)
 '''
 
 
-class ArgparseOption(object):
+#class ArgparseOption(object):
+class ArgparseOption(Frame):
     '''Base class for graphical representation of argparse command line arguments.
     Derived classes handle specific argument types, e.g. strings, choices, etc.
     '''
-    def __init__(self, option, **kwargs):
+    def __init__(self, tk_parent, option, **kwargs):
         '''
         Configure the basics of this gui item.
         
@@ -84,6 +85,8 @@ class ArgparseOption(object):
         #Use the last listed flag, which is likely to be the more descriptive long one.
         #There will be no option_strings for a positional arg
         '''
+        Frame.__init__(self, tk_parent)
+
         self.option = option
 
         if option.option_strings:
@@ -93,7 +96,7 @@ class ArgparseOption(object):
        
         self.return_string = []
         
-        self.hide = 'HIDE' in option.help
+        self.omit = 'HIDE' in option.help
         
         self.nargs = option.nargs
 
@@ -101,6 +104,8 @@ class ArgparseOption(object):
         self.depends_on = 0
 
     def extract_label_from_help(self):
+        '''Extract a reasonable label.
+        '''
         help_string = re.sub('[(]default [)]', '', self.option.help).strip()
         if help_string:
             self.label_string = help_string
@@ -108,12 +113,20 @@ class ArgparseOption(object):
             self.label_string = re.sub('--', '', self.option.option_strings[-1])
 
     def position(self, row, col, padx=10, pady=2):
+        '''Position the widget, and the return the correct row for the next widget
+        to be placed at
+        '''
         next_row = row + 1
         self.label.grid(row=row, column=col, padx=padx, pady=pady, sticky='W')
-        self.widget.grid(row=row, column=col + 1, padx=padx, pady=pady, sticky='W')
+        self.widget.grid(row=row, column=col + 1, padx=padx, pady=pady, sticky='N')
+        #an update box is used e.g. to show the path of a text file that has been chosen
         if hasattr(self, 'update_box'):
             self.update_box.grid(row=row + 1, column=col, padx=padx, sticky='W', columnspan=2)
             next_row += 1
+        
+        self.columnconfigure(0, minsize=450)
+        self.columnconfigure(1, minsize=150)
+        self.grid()
         return next_row 
 
     def grey_out(self):
@@ -122,8 +135,8 @@ class ArgparseOption(object):
         '''
         if not hasattr(self, 'widget'):
             sys.exit('ERROR: grey_out called before ArgparseOption configured\n')
-        self.widget.config(state=DISABLED)
-        self.label.config(state=DISABLED)
+        for child in [ self.nametowidget(ch) for ch in self.winfo_children() ]:
+            child.config(state=DISABLED)
 
     def activate(self):
         '''Return the label and widget for an option back to the normal state from 
@@ -133,8 +146,8 @@ class ArgparseOption(object):
         '''
         self.depends_on -= 1
         if not self.depends_on:
-            self.widget.config(state=NORMAL)
-            self.label.config(state=NORMAL)
+            for child in [ self.nametowidget(ch) for ch in self.winfo_children() ]:
+                child.config(state=NORMAL)
 
     def register_dependency(self, dep):
         '''Add dep to a list of other options that depend on this option, and grey
@@ -151,7 +164,7 @@ class ArgparseOption(object):
         '''
         for dep in self.dependent_options:
             dep.activate()
-        
+       
 
 class ArgparseBoolOption(ArgparseOption):
     '''A boolean True/False argument.  Will be represented in the gui with a Checkbutton.
@@ -175,29 +188,30 @@ class ArgparseBoolOption(ArgparseOption):
     def __init__(
             self, 
             option, 
-            frame, 
-            label_width=100):
+            tk_parent, 
+            label_width=60):
         
-        ArgparseOption.__init__(self, option)
-       
+        ArgparseOption.__init__(self, tk_parent, option)
+
         #using Variable rather than IntVar since it allows a default of None
         self.var = Variable()
         self.var.set(option.default)
 
-        if not self.hide:
+        if not self.omit:
             self.extract_label_from_help()
 
-            self.label = Label(frame, text=fill(self.label_string, label_width))
+            self.label = Label(self, text=fill(self.label_string, label_width))
             
             if isinstance(option, argparse._StoreTrueAction):
-                self.widget = Checkbutton(frame, variable=self.var, onvalue=1, offvalue=0)
+                self.widget = Checkbutton(self, variable=self.var, onvalue=1, offvalue=0)
             elif isinstance(option, argparse._StoreFalseAction):
-                self.widget = Checkbutton(frame, variable=self.var, onvalue=0, offvalue=1)
+                self.widget = Checkbutton(self, variable=self.var, onvalue=0, offvalue=1)
             else: 
                 #I think that I found some case where it is possible for the action to be
                 #neither store_true nor store_false
-                self.widget = Checkbutton(frame, variable=self.var, onvalue=1, offvalue=0)
-            
+                self.widget = Checkbutton(self, variable=self.var, onvalue=1, offvalue=0)
+         
+
     def make_string(self):
         if bool(self.var.get()):
             return [ self.output_arg ]
@@ -209,14 +223,14 @@ class ArgparseStringOption(ArgparseOption):
     def __init__(
             self, 
             option, 
-            frame, 
-            label_width=100):
+            tk_parent, 
+            label_width=60):
 
-        ArgparseOption.__init__(self, option)
+        ArgparseOption.__init__(self, tk_parent, option)
         self.var = StringVar()
-        self.widget = Entry(frame, textvariable=self.var, width=10)
+        self.widget = Entry(self, textvariable=self.var, width=10)
 
-        if not self.hide:
+        if not self.omit:
             self.extract_label_from_help()
             
             req_string = 'REQ: ' if option.required else ''
@@ -227,7 +241,7 @@ class ArgparseStringOption(ArgparseOption):
             elif self.nargs in [ '*', '+' ]:
                 self.label_string += ' (multiple values allowed)'
 
-            self.label = Label(frame, text=fill(self.label_string, label_width))
+            self.label = Label(self, text=fill(self.label_string, label_width))
         
         if option.default:
             if isinstance(option.default, list):
@@ -259,10 +273,10 @@ class ArgparseOptionMenuOption(ArgparseOption):
     def __init__(
             self, 
             option, 
-            frame, 
-            label_width=100):
+            tk_parent, 
+            label_width=60):
         
-        ArgparseOption.__init__(self, option)
+        ArgparseOption.__init__(self, tk_parent, option)
         
         self.var = StringVar()
         self.var.set(option.default)
@@ -270,13 +284,13 @@ class ArgparseOptionMenuOption(ArgparseOption):
         #OptionMenu signature is this:
         #__init__(self, master, variable, value, *values, **kwargs)
         #where variable is "the resource textvariable", and value is the default value
-        self.widget = OptionMenu(frame, self.var, option.choices[0], *option.choices[1:])
+        self.widget = OptionMenu(self, self.var, option.choices[0], *option.choices[1:])
 
         self.extract_label_from_help()
         req_string = 'REQ: ' if option.required else ''
         self.label_string = req_string + self.label_string
 
-        self.label = Label(frame, text=fill(self.label_string, label_width))
+        self.label = Label(self, text=fill(self.label_string, label_width))
 
     def make_string(self):
         if self.var.get():
@@ -289,39 +303,39 @@ class ArgparseFileOption(ArgparseOption):
     def __init__(
             self, 
             option, 
-            frame, 
+            tk_parent, 
             display_filenames=True,
-            label_width=100):
+            label_width=60):
         
-        ArgparseOption.__init__(self, option)
+        ArgparseOption.__init__(self, tk_parent, option)
         self.label_width = label_width
 
-        self.label = Label(frame, text=fill(option.help, self.label_width))
+        self.label = Label(self, text=fill(option.help, self.label_width))
         if option.type and hasattr(option.type, "_mode"):
             #a mode would be here if the option is specified a file to argparse, rather than the path to a file
             if 'r' in option.type._mode:
                 if self.nargs and (self.nargs in [ '*', '+' ] or self.nargs > 1):
-                    self.widget = Button(frame, text='OPEN', command=self.open_multiple_files_dialog)
+                    self.widget = Button(self, text='OPEN', command=self.open_multiple_files_dialog)
                 else:
-                    self.widget = Button(frame, text='OPEN', command=self.open_file_dialog)
+                    self.widget = Button(self, text='OPEN', command=self.open_file_dialog)
             elif 'w' in option.type._mode:
-                self.widget = Button(frame, text='OPEN', command=self.output_file_dialog)
+                self.widget = Button(self, text='OPEN', command=self.output_file_dialog)
         else:
             #this is obviously a total hack, and depends on the "destination" variable name assigned in argparse
             if 'out' in option.dest.lower():
-                self.widget = Button(frame, text='SAVE AS', command=self.output_file_dialog)
+                self.widget = Button(self, text='SAVE AS', command=self.output_file_dialog)
             else:
                 if self.nargs and (self.nargs in [ '*', '+' ] or self.nargs > 1):
-                    self.widget = Button(frame, text='OPEN', command=self.open_multiple_files_dialog)
+                    self.widget = Button(self, text='OPEN', command=self.open_multiple_files_dialog)
                 else:
-                    self.widget = Button(frame, text='OPEN', command=self.open_file_dialog)
+                    self.widget = Button(self, text='OPEN', command=self.open_file_dialog)
 
         if self.nargs and (self.nargs in [ '*', '+' ] or self.nargs > 1):
             fstr = 'Files'
         else:
             fstr = 'File'
 
-        self.update_box = Label(frame, text=fill('  %s chosen: ' % fstr, self.label_width), anchor='w', foreground='red')
+        self.update_box = Label(self, text=fill('  %s chosen: ' % fstr, self.label_width), anchor='w', foreground='red')
 
         self.var = None
 
@@ -355,6 +369,174 @@ class ArgparseFileOption(ArgparseOption):
         return self.return_string
 
 
+class ArgparseOptionGroup(Frame):
+    def __init__(self, 
+            tk_parent, 
+            group,
+            widget_padx=10,
+            widget_pady=4,
+            label_width=60):
+      
+        #ArgparseGui
+            #column frame
+                #self (group_frame)
+                #   group_title_frame
+                #       title_label
+                #       hide_button
+                #   options_frame
+                #       each option
+                #           label
+                #           widget
+                #           (other, e.g. update box)
+
+        column_offset = 0
+
+        #self.tk_parent = tk_parent
+        Frame.__init__(self, tk_parent)
+        self.options = {}
+        self.num_rows = 0
+
+        group_title_displayed = False
+        if not group_title_displayed:
+            if group.title != "optional arguments":
+                self.display_title = group.title.upper()
+            else:
+                #This is for the optional group, the default group for arguments
+                self.display_title = "Misc. options".upper()
+            #Put the group label and hide widget in a single frame here
+            self.group_title_frame = Frame(self)
+            Label(self.group_title_frame, 
+                    width=int(label_width*0.7),
+                    text=fill(self.display_title, label_width*0.7), 
+                    font=tkFont.Font(size=14, weight='bold')).grid(row=self.num_rows, column=column_offset, columnspan=1)
+            group_title_displayed = True
+            self.hide_button = Button(self.group_title_frame, text='HIDE', command=self.flip_hidden_state)
+            self.hide_button.grid(row=self.num_rows, column=1, sticky=N)
+            self.hidden = False
+            self.num_rows += 1
+            self.group_title_frame.grid()
+            self.group_title_frame.columnconfigure(0, minsize=450)
+            self.group_title_frame.columnconfigure(1, minsize=150)
+
+        positional_num = 0
+        seen_options = []
+        self.options_frame = Frame(self)
+        #Loop over the individual arguments in this group
+        for option in group._group_actions:
+            if option not in seen_options:
+                seen_options.append(option)
+                
+                #a flag, which appears as a checkbox
+                if isinstance(option, (argparse._StoreTrueAction, argparse._StoreFalseAction, argparse._StoreConstAction)):
+                    gui_option = ArgparseBoolOption(option, self.options_frame, label_width=label_width)
+               
+                #some variable(s) to store
+                elif isinstance(option, (argparse._StoreAction, argparse._AppendAction)):
+                    #with fixed choices, appears as a select box
+                    if option.choices:
+                        gui_option = ArgparseOptionMenuOption(option, self.options_frame, label_width=label_width)
+                    
+                    #hack to add a file chooser widget if 'file' appears in the option name, which would be considered a string otherwise
+                    elif option.type in [str, None] and 'file' in option.dest.lower():
+                        gui_option = ArgparseFileOption(option, self.options_frame, label_width=label_width)
+                    
+                    #if no type is specified to ArgumentParser.add_argument then the default is str
+                    #this will appear as a text entry box
+                    elif option.type in [None, str, float, int, type(proportion_type), type(argparse_bounded_float)]:
+                        gui_option = ArgparseStringOption(option, self.options_frame, label_width=label_width)
+                   
+                    #if the actual argparse.FileType is specified in the type, in which case it is usually automatically opened during parse_args
+                    elif option.type in [argparse.FileType,  file]:
+                        gui_option = ArgparseFileOption(option, self.options_frame, label_width=label_width)
+                   
+                    else:
+                        sys.exit("unknown Store action: %s (%s)\n" % (type(option), option.dest))
+                
+                #my derived action, same as append, but doesn't overwrite specified defaults (good for kwargs)
+                elif isinstance(option, ArgparseActionAppendToDefault):
+                    gui_option = ArgparseStringOption(option, self.options_frame, label_width=label_width)
+                #ignore help
+                elif isinstance(option, (argparse._HelpAction, argparse._VersionAction)):
+                    continue
+                else:
+                    sys.exit("unknown action: %s\n" % option)
+               
+                self.num_rows = gui_option.position(self.num_rows, column_offset)
+
+                if gui_option.option.option_strings:
+                    self.options[gui_option.option.option_strings[-1]] = gui_option
+                else:
+                    self.options['positional%d' % positional_num] = gui_option
+                    positional_num += 1
+                
+            self.options_frame.grid()
+    
+    def position(self, row, col, padx=10, pady=2):
+        self.grid(row=row, column=col, padx=padx, pady=pady, sticky='N')
+        return self.num_rows
+
+    def hide(self):
+        self.hidden = True
+        self.options_frame.grid_remove()
+
+    def unhide(self):
+        self.hidden = False
+        self.options_frame.grid()
+
+    def flip_hidden_state(self):
+        if self.hidden:
+            self.unhide()
+            self.hide_button.config(text='HIDE')
+        else:
+            self.hide()
+            self.hide_button.config(text='UNHIDE')
+
+    @staticmethod
+    def count_rows_needed(group):
+        '''Calculate the number of rows that this group will take up in the GUI. Can't do this while creating the actual 
+        group, since it needs to know who its parent column will be, which requires knowing how many lines it will take
+        The annoying part here will be to remember to sync the logic here with that used above in the group constructor.
+        '''
+        #first row is for title
+        rows_needed = 1 
+        seen_options = []
+        #Loop over the individual arguments in this group
+        for option in group._group_actions:
+            if option not in seen_options:
+                seen_options.append(option)
+                
+                #a flag, which appears as a checkbox
+                if isinstance(option, (argparse._StoreTrueAction, argparse._StoreFalseAction, argparse._StoreConstAction)):
+                    rows_needed += 1
+               
+                #some variable(s) to store
+                elif isinstance(option, (argparse._StoreAction, argparse._AppendAction)):
+                    #with fixed choices, appears as a select box
+                    if option.choices:
+                        rows_needed += 1
+                    
+                    #hack to add a file chooser widget if 'file' appears in the option name, which would be considered a string otherwise
+                    elif option.type in [str, None] and 'file' in option.dest.lower():
+                        rows_needed += 2
+                    
+                    #if no type is specified to ArgumentParser.add_argument then the default is str
+                    #this will appear as a text entry box
+                    elif option.type in [None, str, float, int, type(proportion_type), type(argparse_bounded_float)]:
+                        rows_needed += 1
+                   
+                    #if the actual argparse.FileType is specified in the type, in which case it is usually automatically opened during parse_args
+                    elif option.type in [argparse.FileType,  file]:
+                        rows_needed += 2
+                   
+                #my derived action, same as append, but doesn't overwrite specified defaults (good for kwargs)
+                elif isinstance(option, ArgparseActionAppendToDefault):
+                    rows_needed += 1
+                #ignore help
+                elif isinstance(option, (argparse._HelpAction, argparse._VersionAction)):
+                    continue
+        return rows_needed
+ 
+
 class ArgparseGui(object):
     def __init__(
             self, 
@@ -365,7 +547,7 @@ class ArgparseGui(object):
             widgets_per_column=18,
             widget_padx=10,
             widget_pady=4,
-            label_width=65,
+            label_width=60,
             destroy_when_done=True,
             output_frame=False,
             graphics_window=False):
@@ -383,11 +565,8 @@ class ArgparseGui(object):
 
         #start collecting the options
         self.option_list = {}
-        #bizarrely, options appear once for each potential flag (i.e. short and long), so need to keep track
-        seen_options = []
 
-        column_offset = 0
-        row = 0
+        group_row, option_row = 0, 0
         max_row, max_col = 0, 0
         
         #first group is positional, second is optional, then any user defined groups
@@ -400,80 +579,31 @@ class ArgparseGui(object):
        
         positional_num = 1
         #Loop over the argparse argument groups
+        self.column_frame = Frame(self.frame)
+        self.column_frames = [self.column_frame]
         for group in group_list:
             if len(group._group_actions) and not hasattr(group, 'GUI_IGNORE'):
-                group_title_displayed = False
-                #Loop over the individual arguments in this group
-                for option in group._group_actions:
-                    if option not in seen_options:
-                        seen_options.append(option)
-                        
-                        if not group_title_displayed:
-                            #Start in a new column if necessary
-                            if row + len(group._group_actions) > widgets_per_column and row > widgets_per_column - 3:
-                                row = 0
-                                column_offset += 2
-                            if group.title != "optional arguments":
-                                display_title = group.title.upper()
-                            else:
-                                #This is for the optional group, the default group for arguments
-                                display_title = "Misc. options".upper()
-                            #Place a centered label for the group name
-                            #Label(self.frame, text=fill(display_title, label_width*0.8), font=tkFont.Font(size=14, weight='bold')).grid(row=row, column=column_offset, columnspan=2)
-                            Label(self.frame, text=fill(display_title, label_width*0.8), font=tkFont.Font(size=14, weight='bold')).grid(row=row, column=column_offset, columnspan=1)
-                            group_title_displayed = True
-                            row += 1
-                      
-                        #a flag, which appears as a checkbox
-                        if isinstance(option, (argparse._StoreTrueAction, argparse._StoreFalseAction, argparse._StoreConstAction)):
-                            gui_option = ArgparseBoolOption(option, self.frame, label_width=label_width)
-                       
-                        #some variable(s) to store
-                        elif isinstance(option, (argparse._StoreAction, argparse._AppendAction)):
-                            #print option.dest, option.type, type(option.type), type(option)
-                            #with fixed choices, appears as a select box
-                            if option.choices:
-                                gui_option = ArgparseOptionMenuOption(option, self.frame, label_width=label_width)
-                            
-                            #hack to add a file chooser widget if 'file' appears in the option name, which would be considered a string otherwise
-                            elif option.type in [str, None] and 'file' in option.dest.lower():
-                                gui_option = ArgparseFileOption(option, self.frame, label_width=label_width)
-                            
-                            #if no type is specified to ArgumentParser.add_argument then the default is str
-                            #this will appear as a text entry box
-                            elif option.type in [None, str, float, int, type(proportion_type), type(argparse_bounded_float)]:
-                                gui_option = ArgparseStringOption(option, self.frame, label_width=label_width)
-                           
-                            #if the actual argparse.FileType is specified in the type, in which case it is usually automatically opened during parse_args
-                            elif option.type in [argparse.FileType,  file]:
-                                gui_option = ArgparseFileOption(option, self.frame, label_width=label_width)
-                           
-                            else:
-                                sys.exit("unknown Store action: %s (%s)\n" % (type(option), option.dest))
-                        
-                        #my derived action, same as append, but doesn't overwrite specified defaults (good for kwargs)
-                        elif isinstance(option, ArgparseActionAppendToDefault):
-                            gui_option = ArgparseStringOption(option, self.frame, label_width=label_width)
-                        #ignore help
-                        elif isinstance(option, (argparse._HelpAction, argparse._VersionAction)):
-                            continue
-                        else:
-                            sys.exit("unknown action: %s\n" % option)
-                       
-                        max_row = max(row, max_row)
-                        max_col = max(column_offset, max_col)
-                        row = gui_option.position(row, column_offset)
-                        
-                        if row >= widgets_per_column:
-                            row = 0
-                            column_offset += 2
+                #need to figure out the number of rows needed here before the group 
+                #can be created, since need to pass the proper column_frame to it
+                group_row_size = ArgparseOptionGroup.count_rows_needed(group)
 
-                        #self.option_list.append(gui_option)
-                        if gui_option.option.option_strings:
-                            self.option_list[gui_option.option.option_strings[-1]] = gui_option
-                        else:
-                            self.option_list['positional%d' % positional_num] = gui_option
-                            positional_num += 1
+                if option_row + group_row_size >= widgets_per_column:
+                    group_row = 0
+                    option_row = 0
+                    self.column_frame = Frame(self.frame)
+                    self.column_frames.append(self.column_frame)
+
+                gui_group = ArgparseOptionGroup(self.column_frame, group)
+               
+                #by default this places widget in next unused row
+                gui_group.grid()
+                option_row += group_row_size
+                group_row += 1
+
+                self.option_list.update(gui_group.options)
+
+        for num, frame in enumerate(self.column_frames):
+            frame.grid(row=0, column=num, sticky=N)
 
         #buttons appear below the other widgets
         self.button_frame = Frame(self.frame)
@@ -496,57 +626,10 @@ class ArgparseGui(object):
         but.grid(row=0, column=1)
         self.buttons['CANCEL'] = but
 
-        #a window to spit out text
-        if output_frame:
-            self.results = Text(self.frame, width=label_width, borderwidth=2)
-            self.results.grid(row=0, column = column_offset + 2, rowspan=widgets_per_column, sticky='WNS')
-            
-            #self.results_canvas = Canvas(self.frame)
-            #self.results_canvas.grid(row=0, column = column_offset + 2, rowspan=widgets_per_column, padx=widget_padx, sticky='NS')
-            #self.results = Text(self.results_canvas, width=label_width, height=36, background='white', relief='sunken', borderwidth=2)
-            #self.results.grid(row=0, column=0, rowspan=widgets_per_column, sticky='NS')
-
-        else:
-            self.results = None
-
-        #a window to spit out graphics
-        if graphics_window:
-            self.sort_button = Button(self.button_frame, text='SORT')
-            self.sort_button.grid(row=0, column=2)
-            #self.graphics_canvas = Canvas(self.frame, width=width, height=100)
-            self.graphics_canvas = Canvas(self.frame, height=100, borderwidth=2, relief='sunken')
-            self.graphics_canvas.grid(row=widgets_per_column+2, column=0, padx=widget_padx, pady=widget_pady, columnspan=column_offset+3, rowspan=2, sticky='WE')
-
         self.cancelled = False
 
         self.bring_to_front()
 
-        #print self.frame.grid_info()
-        #print self.canvas.grid_info()
-        #print self.frame.propagate(True)
-        #print self.canvas.propagate(True)
-        #print self.tk.bbox()
-        #self.tk.wm_geometry('1000x1000+0+0')
-        #print self.tk.wm_geometry()
-        #print self.tk.maxsize()
-        #print dir(self.tk)
-        #self.frame.pack(fill=BOTH, expand=YES)
-        #self.frame.pack(fill=BOTH, expand=NO)
-        #self.canvas.pack()
-        #self.frame.pack()
-        #self.canvas.pack()
-        #print self.canvas.pack_info()
-        #print self.frame.pack_info()
-        
-        
-        #print self.tk.grid_bbox()
-        #print self.canvas.grid_bbox()
-        #print self.frame.grid_bbox()
-        
-        #print self.tk.grid_propagate()
-        #print self.canvas.grid_propagate()
-        #print self.frame.grid_propagate()
-    
     def AddScrollbars(self, height, width):
         '''adapted from http://stackoverflow.com/questions/3085696/adding-a-scrollbar-to-a-grid-of-widgets-in-tkinter
         
@@ -599,7 +682,6 @@ class ArgparseGui(object):
     def cancel(self):
         self.frame.quit()
         self.frame.destroy()
-        #self.frame.quit()
         self.cancelled = True
 
     def OnFrameConfigure(self, event):
@@ -641,9 +723,6 @@ class ArgparseGui(object):
             button.grid(row=0, column=2)
             self.buttons.append(button)
 
-    #def create_results_window(self, height, width):
-
-
 
 class ResultsWindow(object):
     '''Class to more easily create a new toplevel window that contains various kinds of results,
@@ -656,8 +735,7 @@ class ResultsWindow(object):
         self.border_width = border_width
         self.pane_width = pane_width
         self.pane_height = pane_height
-        self.max_row = 0
-        self.max_column = 0
+        self.max_row, self.max_column = 0, 0
 
         self.internal_pane_width = pane_width - border_width * 2
         self.internal_pane_height = pane_height - border_width * 2
