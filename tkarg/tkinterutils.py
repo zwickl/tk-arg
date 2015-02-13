@@ -11,8 +11,61 @@ from textwrap import fill
 import re
 import shlex
 import subprocess
-#from plotutils import ArgparseActionAppendToDefault
-from pygot.utils import proportion_type, argparse_bounded_float, ArgparseActionAppendToDefault
+
+
+class ArgparseActionAppendToDefault(argparse.Action):
+    '''Normally defaults can be set on argparse options, but will be overridden if the 
+    argument appears on the command line.  This will allow arguments passed on the
+    command line to simply be appended to the default list.  This would mainly be 
+    used for kwargs specified on the command line and a PlottingArgumentParser
+    instantiated with some kwargs set as defaults. Because the values that would
+    come from the commandline appear later, they should trump earlier ones in the
+    prepare_plot_kwargs function.
+    '''
+    def __call__(self, parser, namespace, values, option_string=None):
+        #print '%r %r %r' % (self.dest, self.default, values)
+        if not hasattr(self, 'default'):
+            raise ValueError('only makes sense to call AppendToDefaultArgparseAction \
+                    when default value to argument is defined')
+        if not isinstance(self.default, list):
+            raise ValueError('only makes sense to call AppendToDefaultArgparseAction \
+                    when defaults are in a list')
+        if isinstance(values, str):
+            values = values.split()
+
+        setattr(namespace, self.dest, self.default + values)
+
+
+def argparse_bounded_float(min_val=0.0, max_val=1.0):
+    '''Closure-based function for use in type and bound checking, specified as a type= argument in argparse.add_argument().
+    It defaults to checking for a proportion, but any bounds can be passed.
+    On failure raises an ArgumentTypeError, defined by argparse.
+    >>> f = argparse_bounded_float()
+    >>> f(1.0)
+    1.0
+    >>> f = argparse_bounded_float()
+    >>> f('1.1')
+    Traceback (most recent call last):
+    ...
+    ArgumentTypeError: value 1.100000 must be between 0.00 and 1.00
+    >>> f = argparse_bounded_float(max_val=2.0)
+    >>> f('1.9')
+    1.9
+    '''
+    def func(string):
+        value = float(string)
+        if value < min_val or value > max_val:
+            mess = 'value %f must be between %.2f and %.2f' % (value, min_val, max_val)
+            raise ArgumentTypeError(mess)
+        return value
+    
+    return func
+
+
+def proportion_type():
+    '''Limited version of argparse_bounded_float for compatibility with legacy code.'''
+    return argparse_bounded_float()
+
 
 '''
 ***For reference, here is the help on the attributes of the argparse.Action baseclass***
@@ -396,27 +449,24 @@ class ArgparseOptionGroup(Frame):
         self.options = {}
         self.num_rows = 0
 
-        group_title_displayed = False
-        if not group_title_displayed:
-            if group.title != "optional arguments":
-                self.display_title = group.title.upper()
-            else:
-                #This is for the optional group, the default group for arguments
-                self.display_title = "Misc. options".upper()
-            #Put the group label and hide widget in a single frame here
-            self.group_title_frame = Frame(self)
-            Label(self.group_title_frame, 
-                    width=int(label_width*0.7),
-                    text=fill(self.display_title, label_width*0.7), 
-                    font=tkFont.Font(size=14, weight='bold')).grid(row=self.num_rows, column=column_offset, columnspan=1)
-            group_title_displayed = True
-            self.hide_button = Button(self.group_title_frame, text='HIDE', command=self.flip_hidden_state)
-            self.hide_button.grid(row=self.num_rows, column=1, sticky=N)
-            self.hidden = False
-            self.num_rows += 1
-            self.group_title_frame.grid()
-            self.group_title_frame.columnconfigure(0, minsize=450)
-            self.group_title_frame.columnconfigure(1, minsize=150)
+        if group.title != "optional arguments":
+            self.display_title = group.title.upper()
+        else:
+            #This is for the optional group, the default group for arguments
+            self.display_title = "Misc. options".upper()
+        #Put the group label and hide widget in a single frame here
+        self.group_title_frame = Frame(self)
+        Label(self.group_title_frame, 
+                width=int(label_width*0.7),
+                text=fill(self.display_title, label_width*0.7), 
+                font=tkFont.Font(size=14, weight='bold')).grid(row=self.num_rows, column=column_offset, columnspan=1)
+        #hide button is created here for simplicity, but may be removed if specified in gui_config
+        self.hide_button = Button(self.group_title_frame, text='HIDE', command=self.flip_hidden_state)
+        self.hide_button.grid(row=self.num_rows, column=1, sticky=N)
+        self.num_rows += 1
+        self.group_title_frame.grid()
+        self.group_title_frame.columnconfigure(0, minsize=450)
+        self.group_title_frame.columnconfigure(1, minsize=150)
 
         positional_num = 0
         seen_options = []
@@ -470,6 +520,12 @@ class ArgparseOptionGroup(Frame):
                     positional_num += 1
                 
             self.options_frame.grid()
+
+            self.hidden = False
+            if hasattr(group, 'gui_config'):
+                self.config(**group.gui_config)
+            else:
+                self.config()
     
     def position(self, row, col, padx=10, pady=2):
         self.grid(row=row, column=col, padx=padx, pady=pady, sticky='N')
@@ -491,51 +547,21 @@ class ArgparseOptionGroup(Frame):
             self.hide()
             self.hide_button.config(text='UNHIDE')
 
-    @staticmethod
-    def count_rows_needed(group):
-        '''Calculate the number of rows that this group will take up in the GUI. Can't do this while creating the actual 
-        group, since it needs to know who its parent column will be, which requires knowing how many lines it will take
-        The annoying part here will be to remember to sync the logic here with that used above in the group constructor.
-        '''
-        #first row is for title
-        rows_needed = 1 
-        seen_options = []
-        #Loop over the individual arguments in this group
-        for option in group._group_actions:
-            if option not in seen_options:
-                seen_options.append(option)
-                
-                #a flag, which appears as a checkbox
-                if isinstance(option, (argparse._StoreTrueAction, argparse._StoreFalseAction, argparse._StoreConstAction)):
-                    rows_needed += 1
-               
-                #some variable(s) to store
-                elif isinstance(option, (argparse._StoreAction, argparse._AppendAction)):
-                    #with fixed choices, appears as a select box
-                    if option.choices:
-                        rows_needed += 1
-                    
-                    #hack to add a file chooser widget if 'file' appears in the option name, which would be considered a string otherwise
-                    elif option.type in [str, None] and 'file' in option.dest.lower():
-                        rows_needed += 2
-                    
-                    #if no type is specified to ArgumentParser.add_argument then the default is str
-                    #this will appear as a text entry box
-                    elif option.type in [None, str, float, int, type(proportion_type), type(argparse_bounded_float)]:
-                        rows_needed += 1
-                   
-                    #if the actual argparse.FileType is specified in the type, in which case it is usually automatically opened during parse_args
-                    elif option.type in [argparse.FileType,  file]:
-                        rows_needed += 2
-                   
-                #my derived action, same as append, but doesn't overwrite specified defaults (good for kwargs)
-                elif isinstance(option, ArgparseActionAppendToDefault):
-                    rows_needed += 1
-                #ignore help
-                elif isinstance(option, (argparse._HelpAction, argparse._VersionAction)):
-                    continue
-        return rows_needed
- 
+    def config(self, **kwargs):
+        if not hasattr(self, 'gui_config'):
+            self.gui_config = {
+                    'allow_hide': False,
+                    'start_hidden': False
+                    }
+        self.gui_config.update(kwargs)
+        for key, val in kwargs.iteritems():
+            self.gui_config[key] = val
+
+        if self.gui_config['start_hidden']:
+            self.hide()
+        elif self.gui_config['allow_hide'] is False:
+            self.hide_button.grid_remove()
+            
 
 class ArgparseGui(object):
     def __init__(
@@ -583,17 +609,21 @@ class ArgparseGui(object):
         self.column_frames = [self.column_frame]
         for group in group_list:
             if len(group._group_actions) and not hasattr(group, 'GUI_IGNORE'):
-                #need to figure out the number of rows needed here before the group 
-                #can be created, since need to pass the proper column_frame to it
-                group_row_size = ArgparseOptionGroup.count_rows_needed(group)
+                #This is inelegant, but first create the group, then look at its size.  
+                #If it is too big to fit into the current column, just make the gui 
+                #forget it and remake it to place into the next column. Making a 
+                #function that just determines the size is a little dangerous since
+                #its logic will need to be manually sync'ed with the group __init__
+                gui_group = ArgparseOptionGroup(self.column_frame, group)
+                group_row_size = gui_group.num_rows
 
                 if option_row + group_row_size >= widgets_per_column:
+                    gui_group.grid_forget()
                     group_row = 0
                     option_row = 0
                     self.column_frame = Frame(self.frame)
                     self.column_frames.append(self.column_frame)
-
-                gui_group = ArgparseOptionGroup(self.column_frame, group)
+                    gui_group = ArgparseOptionGroup(self.column_frame, group)
                
                 #by default this places widget in next unused row
                 gui_group.grid()
