@@ -304,8 +304,9 @@ class ArgparseStringOption(ArgparseOption):
 
     def make_string(self):
         if self.var.get():
-            #print self.output_arg, self.var.get(), type(self.var.get()), self.nargs
-            self.return_string.append(self.output_arg)
+            #output_arg is None for positional arg
+            if self.output_arg is not None:
+                self.return_string.append(self.output_arg)
             
             if self.nargs and (self.nargs in [ '*', '+' ] or self.nargs > 1):
                 #shlex.split here properly leaves quoted strings unsplit
