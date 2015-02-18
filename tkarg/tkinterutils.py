@@ -5,12 +5,23 @@ import tkFileDialog
 import tkFont
 #importing ttk here overrides some widget definitions from Tkinter, which is fine
 #except bizarre things like specifying background= in constructors doesn't work
-#from ttk import *
+from ttk import Progressbar
 import argparse
 from textwrap import fill
 import re
 import shlex
 import subprocess
+import Queue
+
+def print_options_namespace(options):
+    '''Output a table of the option values contained in the Namespace created by
+    the argparse parse_args call.  Mainly for debugging.
+    '''
+    vdict = vars(options)
+    wid = max(len(v) for v in vdict.keys())
+    sys.stdout.write('%*s\t%s\n' % (wid, 'var', 'value'))
+    for opt, val in vdict.items():
+        sys.stdout.write('%*s\t%r\n' % (wid, opt, val))
 
 
 class ArgparseActionAppendToDefault(argparse.Action):
@@ -577,10 +588,14 @@ class ArgparseGui(object):
             label_width=60,
             destroy_when_done=True,
             output_frame=False,
-            graphics_window=False):
+            graphics_window=False,
+            progress_bar=False):
 
         self.tk = tk or Tk()
         self.tk.title(parser.description or parser.prog)
+
+        self.queue = Queue.Queue()
+        self.analysis_threads = []
 
         auto_size = False
         if auto_size:
@@ -608,6 +623,7 @@ class ArgparseGui(object):
         #Loop over the argparse argument groups
         self.column_frame = Frame(self.frame)
         self.column_frames = [self.column_frame]
+        
         for group in group_list:
             if len(group._group_actions) and not hasattr(group, 'GUI_IGNORE'):
                 #This is inelegant, but first create the group, then look at its size.  
@@ -657,6 +673,12 @@ class ArgparseGui(object):
         but.grid(row=0, column=1)
         self.buttons['CANCEL'] = but
 
+        if progress_bar:
+            self.progress_bar = Progressbar(self.button_frame, mode='indeterminate', length=300)
+            self.progress_bar.grid(columnspan=2)
+        else:
+            self.progress_bar = None
+
         self.cancelled = False
 
         self.bring_to_front()
@@ -690,6 +712,18 @@ class ArgparseGui(object):
         #this will allow the scrollbars to adjust if the window is manually resized
         self.frame.bind("<Configure>", self.OnFrameConfigure)
 
+    def process_queue(self):
+        try:
+            res = self.queue.get(0)
+            # Show result of the task if needed
+            self.progress_bar.stop()
+            self.result = res
+        except Queue.Empty:
+            self.tk.after(100, self.process_queue)
+
+    def queue_thread(self, thread):
+        self.analysis_threads.append(thread)
+
     def output_result(self, text):
         if self.results:
             self.results.insert(END, text)
@@ -705,6 +739,10 @@ class ArgparseGui(object):
         return return_list
 
     def submit(self, event=None):
+        for th in self.analysis_threads:
+            th.start()
+            self.process_queue()
+            self.analysis_threads = []
         self.frame.quit()
 
     def done(self):
@@ -744,6 +782,12 @@ class ArgparseGui(object):
             else:
                 self.option_list[key].register_dependency(self.option_list[val])
 
+    def get_option(self, option_flag):
+        try:
+            return self.option_list[option_flag]
+        except KeyError:
+            sys.exit('Trying to get option with unknown flag %s' % option_flag)
+
     def add_buttons(self, button_dict):
         '''Use the passed dictionary to create simple buttons, with keys being the name
         to appear on the button, and the value being the callback function
@@ -762,7 +806,7 @@ class ResultsWindow(object):
     requested by chosing a column, row, row_span and column_span, much like the grid geometry
     manager.
     '''
-    def __init__(self, tk_root, width, height, border_width=5, pane_width=512, pane_height=384):
+    def __init__(self, tk_root, x_position=None, y_position=None, border_width=5, pane_width=512, pane_height=384):
         self.border_width = border_width
         self.pane_width = pane_width
         self.pane_height = pane_height
@@ -773,8 +817,12 @@ class ResultsWindow(object):
 
         self.tk = Toplevel(tk_root)
         self.tk.title('Results')
+        self.tk.update_idletasks()
         self.main_canvas = Canvas(self.tk, borderwidth=0)
         self.main_canvas.pack()
+
+        self.x_position = x_position
+        self.y_position = y_position
 
         self.panes = {}
 
@@ -798,6 +846,55 @@ class ResultsWindow(object):
         self.max_column = max(column + column_span, self.max_column)
 
         self.main_canvas.config(width=self.pane_width * self.max_column, height=self.pane_height * self.max_row)
+
+    def extract_geometry(self, widget):
+
+        widget.geometry('')
+        widget.update_idletasks()
+        geo_string = widget.geometry()
+
+        pos = re.search('^.*([-+][0-9]+)([-+][0-9]+)$', geo_string)
+        pos_x, pos_y = int(pos.group(1)), int(pos.group(2))
+
+        #size = re.search('(^[0-9]+x[0-9]+)[-+].*$', geo_string).group(1).split('x')
+        #width, height = int(size[0]), int(size[1])
+        width, height = widget.winfo_reqwidth(), widget.winfo_reqheight()
+
+        return (width, height, pos_x, pos_y)
+
+    def reposition(self, x=None, y=None):
+        '''Reposition the toplevel with respect to the screen borders, without changing the size.  Positive 
+        x and y are relative to the upper left corner of the screen, as usual.  Negative values are interpreted
+        as the gap between the right side of the window and the right size of the screen, and the same for 
+        the bottoms of the window/screen. To properly do that the height and width of the window must be
+        figured in.  Resizing with geometry() kills the ability of the window to resize as its contents 
+        change, and calling geometry with '' resets that.
+
+        edit - some of this is now done in extract_geometry
+        edit 2 - this doesn't always place the window in quite the right place when a negative x 
+            is specified
+        '''
+        
+        width, height, cur_x, cur_y = self.extract_geometry(self.tk)
+       
+        #print 'cur', width, height, cur_x, cur_y
+
+        x = x or self.x_position or cur_x
+        y = y or self.y_position or cur_y
+
+        if x < 0:
+            x -= width
+        if y < 0:
+            y -= height
+
+        geom = '%dx%d%+d%+d' % (width, height, x, y)
+        #print 'str', geom
+        self.tk.geometry(geom)
+        self.tk.grid()
+        
+        #width, height, cur_x, cur_y = self.extract_geometry(self.tk)
+       
+        #print 'now', width, height, cur_x, cur_y
 
     def add_canvas_pane(self, row=0, column=0, row_span=1, column_span=1, name=None):
         '''
@@ -823,6 +920,9 @@ class ResultsWindow(object):
             self.panes[name] = pane
         else:
             self.panes['pane%d' % len(self.panes)] = pane
+        
+        self.reposition()
+        
         return pane
     
     def add_text_pane(self, row, column, row_span=1, column_span=1, name=None):
@@ -851,6 +951,8 @@ class ResultsWindow(object):
             self.panes[name] = pane
         else:
             self.panes['pane%d' % len(self.panes)] = pane
+
+        self.reposition()
 
         return pane
  
