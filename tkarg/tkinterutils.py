@@ -716,7 +716,7 @@ class ArgparseGui(object):
         try:
             res = self.queue.get(0)
             # Show result of the task if needed
-            self.progress_bar.stop()
+            #self.progress_bar.stop()
             self.result = res
         except Queue.Empty:
             self.tk.after(100, self.process_queue)
