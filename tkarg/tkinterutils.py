@@ -13,6 +13,21 @@ import shlex
 import subprocess
 import Queue
 
+
+def wrap_filepath(path, width):
+    '''Wrap a filepath across multiple lines, despite a lack of spaces.
+    Just changes normal criterion for wrapping (i.e., breaking on spaces) 
+    to allow breaking on slashes as well.  Will need to be adapted for 
+    Windows.
+    '''
+    ret = re.sub(' ', '*', path)
+    ret = re.sub('/', ' ', ret)
+    ret = fill(ret, width)
+    ret = re.sub(' ', '/', ret)
+    ret = re.sub('\n', '/\n', ret)
+    ret = re.sub('[*]', ' ', ret)
+    return ret
+
 def print_options_namespace(options):
     '''Output a table of the option values contained in the Namespace created by
     the argparse parse_args call.  Mainly for debugging.
@@ -132,6 +147,14 @@ class Action(_AttributeHolder)
  |          help string. If None, the 'dest' value will be used as the name.
 '''
 
+class ActivatableTkinterButton(Button):
+    def __init__(self, tk_parent, *args, **kwargs):
+        Button.__init__(self, tk_parent, *args, **kwargs)
+        self.config(state=DISABLED)
+
+    def activate(self, *args):
+        print args
+        self.config(state=NORMAL)
 
 #class ArgparseOption(object):
 class ArgparseOption(Frame):
@@ -181,11 +204,11 @@ class ArgparseOption(Frame):
         to be placed at
         '''
         next_row = row + 1
-        self.label.grid(row=row, column=col, padx=padx, pady=pady, sticky='W')
-        self.widget.grid(row=row, column=col + 1, padx=padx, pady=pady, sticky='N')
+        self.label.grid(row=0, column=0, padx=padx, pady=pady, sticky='W')
+        self.widget.grid(row=0, column=1, padx=padx, pady=pady, sticky='N')
         #an update box is used e.g. to show the path of a text file that has been chosen
         if hasattr(self, 'update_box'):
-            self.update_box.grid(row=row + 1, column=col, padx=padx, sticky='W', columnspan=2)
+            self.update_box.grid(row=1, column=0, padx=padx, sticky='W', columnspan=2)
             next_row += 1
         
         self.columnconfigure(0, minsize=450)
@@ -228,7 +251,7 @@ class ArgparseOption(Frame):
         '''
         for dep in self.dependent_options:
             dep.activate()
-       
+
 
 class ArgparseBoolOption(ArgparseOption):
     '''A boolean True/False argument.  Will be represented in the gui with a Checkbutton.
@@ -402,22 +425,71 @@ class ArgparseFileOption(ArgparseOption):
 
         self.update_box = Label(self, text=fill('  %s chosen: ' % fstr, self.label_width), anchor='w', foreground='red')
 
-        self.var = None
+        #this must be a mutable for some callbacks to work!
+        self.var = []
+        self.file_count = IntVar()
+        self.file_count.set(0)
 
     def open_file_dialog(self):
-        self.var = tkFileDialog.askopenfilename()
-        self.update_box.config(text=fill('  File chosen: %s ' % self.var, self.label_width+50), foreground='red')
+        #self.var.extend(tkFileDialog.askopenfilename())
+        self.var.extend([tkFileDialog.askopenfilename()])
+        self.file_count.set(len(self.var))
+        #self.update_box.config(text=fill('  File chosen: %s ' % self.var, self.label_width+50), foreground='red')
+        self.update_box.config(text=wrap_filepath('  File chosen: %s ' % self.var, self.label_width+10), foreground='red')
         self.activate_dependencies()
 
     def open_multiple_files_dialog(self):
-        self.var = tkFileDialog.askopenfilenames()
-        self.update_box.config(text=fill('  Files chosen: %s ' % ' '.join(self.var), self.label_width+50), foreground='red')
+        self.var.extend(tkFileDialog.askopenfilenames())
+        self.file_count.set(len(self.var))
+        self.update_box.config(text=wrap_filepath('  Files chosen: %s ' % ' '.join(self.var), self.label_width+10), foreground='red')
         self.activate_dependencies()
 
     def output_file_dialog(self):
-        self.var = tkFileDialog.asksaveasfilename()
-        self.update_box.config(text=fill('  File chosen: %s ' % self.var, self.label_width+50), foreground='red')
+        self.var.extend(tkFileDialog.asksaveasfilename())
+        self.file_count.set(len(self.var))
+        self.update_box.config(text=wrap_filepath('  File chosen: %s ' % self.var, self.label_width+10), foreground='red')
         self.activate_dependencies()
+
+    def add_save_and_callback_button(self, label, callback, activate_var, *args, **kwargs):
+        '''A pretty complicated scheme for automatically activing a file save button and immediately following
+        its closing with the use of that file in a callback.  In addition, it allows the button to be activated
+        by changes in other tkinter variables
+        
+        -label - text on the button
+        -activate_var - a tkinter variable that is traced (watched) to determine when this button should be made push-able
+        -callback - a function that is called with the result of the file save dialog as the first argument
+        -args and kwargs are passed to the callback, and are captured when this function is initially called to add the button.
+            If args or kwargs are mutables, then the actual object is captured in the closure (e.g. a list) and its value 
+            may be different at callback time than it was the function was called.  Immutable args and kwargs are of course
+            fixed.
+
+        called like this:
+        opt.add_save_and_callback_button(
+            'COMPUTE', 
+            calculate_triplets,
+            tk_gui.get_option('--subtree-file').file_count,     #the activation variable, a tkinter IntVar
+            tk_gui.get_option('--subtree-file').var,            #an arbitrary arg for the callback
+            messages=stderr_writer)                             #kwarg for the callback
+        '''
+
+        def make_save_and_callback(callback):
+            #wrapper to embed the callback between the launch the save file dialog and capture the callback arg and kwargs in a closure
+            def new_callback():
+                self.var.append(tkFileDialog.asksaveasfilename())
+                with open(self.var[0], 'w') as out_stream:
+                    self.result = callback(out_stream, *args, **kwargs)
+                self.update_box.config(text=fill('  File computed: %s ' % self.var, self.label_width+10), foreground='red')
+                self.activate_dependencies()
+                self.file_count.set(len(self.var))
+            return new_callback
+
+        new_button = ActivatableTkinterButton(self, text=label, command=make_save_and_callback(callback))
+        activate_var.trace('w', new_button.activate)
+        new_button.grid(row=0, column=2)
+        self.columnconfigure(0, minsize=450)
+        self.columnconfigure(1, minsize=75)
+        self.columnconfigure(2, minsize=75)
+        self.grid()
 
     def make_string(self):
         if self.var:
@@ -440,7 +512,7 @@ class ArgparseOptionGroup(Frame):
             group,
             widget_padx=10,
             widget_pady=4,
-            label_width=60):
+            label_width=65):
       
         #ArgparseGui
             #column frame
@@ -588,6 +660,7 @@ class ArgparseGui(object):
             label_width=60,
             destroy_when_done=True,
             output_frame=False,
+            status_frame=True,
             graphics_window=False,
             progress_bar=False):
 
@@ -673,6 +746,11 @@ class ArgparseGui(object):
         but.grid(row=0, column=1)
         self.buttons['CANCEL'] = but
 
+        if status_frame:
+            self.status_frame = Text(self.frame, width=150, height=10)
+            self.status_frame.config(borderwidth=5, relief=GROOVE)
+            self.status_frame.grid(row=widgets_per_column+2, column=0, columnspan=6)
+
         if progress_bar:
             self.progress_bar = Progressbar(self.button_frame, mode='indeterminate', length=300)
             self.progress_bar.grid(columnspan=2)
@@ -682,6 +760,13 @@ class ArgparseGui(object):
         self.cancelled = False
 
         self.bring_to_front()
+
+    def write_to_status(self, message):
+        if not self.status_frame:
+            return
+        self.status_frame.insert(END, message)
+        #this effectively flushes output to the widget, which might be delayed otherwise
+        self.tk.update_idletasks()
 
     def AddScrollbars(self, height, width):
         '''adapted from http://stackoverflow.com/questions/3085696/adding-a-scrollbar-to-a-grid-of-widgets-in-tkinter
@@ -955,4 +1040,4 @@ class ResultsWindow(object):
         self.reposition()
 
         return pane
- 
+
